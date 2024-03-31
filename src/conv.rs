@@ -1435,6 +1435,7 @@ pub enum CreateSurfaceParams {
     ),
     #[cfg(metal)]
     Metal(*mut std::ffi::c_void),
+    DrmFd(std::os::unix::io::RawFd),
 }
 
 pub unsafe fn map_surface(
@@ -1445,6 +1446,7 @@ pub unsafe fn map_surface(
     wl: Option<&native::WGPUSurfaceDescriptorFromWaylandSurface>,
     metal: Option<&native::WGPUSurfaceDescriptorFromMetalLayer>,
     android: Option<&native::WGPUSurfaceDescriptorFromAndroidNativeWindow>,
+    drm_fd: Option<&native::WGPUSurfaceDescriptorFromDrmFd>,
 ) -> CreateSurfaceParams {
     if let Some(win) = win {
         let display_handle = raw_window_handle::WindowsDisplayHandle::new();
@@ -1507,6 +1509,10 @@ pub unsafe fn map_surface(
             raw_window_handle::RawDisplayHandle::Android(display_handle),
             raw_window_handle::RawWindowHandle::AndroidNdk(window_handle),
         ));
+    }
+
+    if let Some(drm_fd) = drm_fd {
+       return CreateSurfaceParams::DrmFd(drm_fd.fd);
     }
 
     panic!("Error: Unsupported Surface");
