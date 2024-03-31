@@ -2631,7 +2631,8 @@ pub unsafe extern "C" fn wgpuInstanceCreateSurface(
             WGPUSType_SurfaceDescriptorFromXlibWindow => native::WGPUSurfaceDescriptorFromXlibWindow,
             WGPUSType_SurfaceDescriptorFromWaylandSurface => native::WGPUSurfaceDescriptorFromWaylandSurface,
             WGPUSType_SurfaceDescriptorFromMetalLayer => native::WGPUSurfaceDescriptorFromMetalLayer,
-            WGPUSType_SurfaceDescriptorFromAndroidNativeWindow => native::WGPUSurfaceDescriptorFromAndroidNativeWindow)
+            WGPUSType_SurfaceDescriptorFromAndroidNativeWindow => native::WGPUSurfaceDescriptorFromAndroidNativeWindow,
+            WGPUSType_SurfaceDescriptorFromDrmFd => native::WGPUSurfaceDescriptorFromDrmFd)
     );
 
     let surface_id = match create_surface_params {
@@ -2648,6 +2649,7 @@ pub unsafe extern "C" fn wgpuInstanceCreateSurface(
                 Err(cause) => handle_error_fatal(cause, "wgpuInstanceCreateSurface"),
             }
         }
+        CreateSurfaceParams::DrmFd(fd) => context.instance_create_surface_drm_fd(fd, ()),
     };
 
     Arc::into_raw(Arc::new(WGPUSurfaceImpl {
@@ -3996,6 +3998,7 @@ pub unsafe extern "C" fn wgpuSurfaceCapabilitiesFreeMembers(
     capabilities: native::WGPUSurfaceCapabilities,
 ) {
     if !capabilities.formats.is_null() && capabilities.formatCount > 0 {
+<<<<<<< HEAD
         drop(Vec::from_raw_parts(
             capabilities.formats as *mut native::WGPUTextureFormat,
             capabilities.formatCount,
@@ -4015,6 +4018,27 @@ pub unsafe extern "C" fn wgpuSurfaceCapabilitiesFreeMembers(
             capabilities.alphaModeCount,
             capabilities.alphaModeCount,
         ));
+=======
+        // drop(Vec::from_raw_parts(
+        //     capabilities.formats,
+        //     capabilities.formatCount,
+        //     capabilities.formatCount,
+        // ));
+    }
+    if !capabilities.presentModes.is_null() && capabilities.presentModeCount > 0 {
+        // drop(Vec::from_raw_parts(
+        //     capabilities.presentModes,
+        //     capabilities.presentModeCount,
+        //     capabilities.presentModeCount,
+        // ));
+    }
+    if !capabilities.alphaModes.is_null() && capabilities.alphaModeCount > 0 {
+        // drop(Vec::from_raw_parts(
+        //     capabilities.alphaModes,
+        //     capabilities.alphaModeCount,
+        //     capabilities.alphaModeCount,
+        // ));
+>>>>>>> 315f9e2 (lib: Fix for newer versions of `webgpu-headers`)
     }
 }
 
