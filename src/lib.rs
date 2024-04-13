@@ -2673,7 +2673,9 @@ pub unsafe extern "C" fn wgpuInstanceCreateSurface(
         }
         #[cfg(metal)]
         CreateSurfaceParams::Metal(layer) => context.instance_create_surface_metal(layer, ()),
-        CreateSurfaceParams::DrmFd(fd) => context.instance_create_surface_drm_fd(fd, ()),
+        CreateSurfaceParams::DrmFd(fd) => context
+            .instance_create_surface_from_drm_fd(fd, ())
+            .expect("failed to create surface from DRM fd"),
     };
 
     Arc::into_raw(Arc::new(WGPUSurfaceImpl {
@@ -4294,4 +4296,83 @@ pub unsafe extern "C" fn wgpuRenderPassEncoderEndPipelineStatisticsQuery(
     let encoder = pass.encoder.as_mut().unwrap();
 
     render_ffi::wgpu_render_pass_end_pipeline_statistics_query(encoder);
+}
+
+// TODO these are all extensions related to external context creation
+//      should they be in their own files?
+
+#[no_mangle]
+pub unsafe extern "C" fn wgpuInstanceDeviceFromEGL(
+    instance: native::WGPUInstance, // TODO is this even necessary? In the raw-gles example they don't use the instance at all, everything works with the adapter
+    descriptor: Option<&native::WGPUDeviceDescriptor>,
+    get_proc_address: native::WGPUEGLGetProcAddress, // TODO make this "official", cuz right now it's just me modifying webgpu.h manually (or maybe not actually, cuz I put it in wgpu.h?)
+) -> *const WGPUDeviceImpl {
+    let instance = instance.as_ref().expect("invalid instance");
+    let context = Arc::clone(&instance.context);
+    let get_proc_address = get_proc_address.expect("invalid get_proc_address function");
+
+    // create exposed adapter and open device
+
+    let exposed = unsafe {
+        <hal::api::Gles as hal::Api>::Adapter::new_external(|name| {
+            let name = CString::new(name).unwrap();
+            get_proc_address(name.as_ptr())
+        })
+    };
+
+    let exposed = exposed.expect("failed to create exposed adapter");
+    let od = unsafe {
+        exposed
+            .adapter
+            .open(wgt::Features::empty(), &wgt::Limits::downlevel_defaults())
+    };
+    let od = od.unwrap();
+
+    use hal::Adapter;
+    let adapter_id = context.create_adapter_from_hal(exposed, ());
+
+    // set up desc
+
+    let adapter_limits = gfx_select!(adapter_id => context.adapter_limits(adapter_id))
+        .expect("failed to get adapter limits");
+    let base_limits = get_base_device_limits_from_adapter_limits(&adapter_limits);
+
+    let (desc, trace_str, device_lost_handler) = match descriptor {
+        Some(descriptor) => {
+            let (desc, trace_str) = follow_chain!(
+                map_device_descriptor((descriptor, base_limits),
+                WGPUSType_DeviceExtras => native::WGPUDeviceExtras)
+            );
+            let device_lost_handler = DeviceLostCallback {
+                callback: descriptor.deviceLostCallback,
+                userdata: descriptor.deviceLostUserdata,
+            };
+            (desc, trace_str, device_lost_handler)
+        }
+        None => (
+            wgt::DeviceDescriptor {
+                required_limits: base_limits,
+                ..Default::default()
+            },
+            std::ptr::null(),
+            DEFAULT_DEVICE_LOST_HANDLER,
+        ),
+    };
+
+    // create device
+
+    let (device_id, queue_id, err) =
+        context.create_device_from_hal(adapter_id, od, &desc, ptr_into_path(trace_str), (), ());
+    match err {
+        None => Arc::into_raw(Arc::new(WGPUDeviceImpl {
+            context: context.clone(),
+            id: device_id,
+            queue: Arc::new(QueueId {
+                context: context.clone(),
+                id: queue_id,
+            }),
+            error_sink: Arc::new(Mutex::new(ErrorSinkRaw::new(device_lost_handler))),
+        })),
+        Some(_err) => std::ptr::null_mut(), // TODO err
+    }
 }
