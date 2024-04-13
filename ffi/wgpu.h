@@ -258,6 +258,10 @@ void wgpuComputePassEncoderEndPipelineStatisticsQuery(WGPUComputePassEncoder com
 void wgpuRenderPassEncoderBeginPipelineStatisticsQuery(WGPURenderPassEncoder renderPassEncoder, WGPUQuerySet querySet, uint32_t queryIndex);
 void wgpuRenderPassEncoderEndPipelineStatisticsQuery(WGPURenderPassEncoder renderPassEncoder);
 
+typedef const void * (*WGPUEGLGetProcAddress)(char const * name) WGPU_FUNCTION_ATTRIBUTE;
+WGPUDevice wgpuInstanceDeviceFromEGL(WGPUInstance instance, WGPU_NULLABLE WGPUDeviceDescriptor const * options, WGPUEGLGetProcAddress getProcAddress);
+WGPUTexture wgpuDeviceDefaultFramebuffer(WGPUDevice device, WGPUTextureDescriptor const * descriptor);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
