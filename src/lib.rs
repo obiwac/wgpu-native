@@ -4668,3 +4668,81 @@ pub unsafe extern "C" fn wgpuInstanceDeviceFromEGL(
         Some(_err) => std::ptr::null_mut(), // TODO err
     }
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn wgpuDeviceDefaultFramebuffer(
+    device: native::WGPUDevice,
+    descriptor: &native::WGPUTextureDescriptor,
+) -> native::WGPUTexture {
+    let device = device.as_ref().expect("invalid device");
+
+    let device_id = device.id;
+    let context = &device.context;
+    let error_sink = &device.error_sink;
+
+    // texture descriptor
+
+    let desc = wgt::TextureDescriptor {
+        label: ptr_into_label(descriptor.label),
+        size: conv::map_extent3d(&descriptor.size),
+        mip_level_count: descriptor.mipLevelCount,
+        sample_count: descriptor.sampleCount,
+        dimension: conv::map_texture_dimension(descriptor.dimension),
+        format: conv::map_texture_format(descriptor.format)
+            .expect("invalid texture format for texture descriptor"),
+        usage: wgt::TextureUsages::from_bits(descriptor.usage)
+            .expect("invalid texture usage for texture descriptor"),
+        view_formats: make_slice(descriptor.viewFormats, descriptor.viewFormatCount)
+            .iter()
+            .map(|v| {
+                conv::map_texture_format(*v).expect("invalid view format for texture descriptor")
+            })
+            .collect(),
+    };
+
+    // create texture
+
+    let format = desc.format;
+    let hal_texture = <hal::api::Gles as hal::Api>::Texture::default_framebuffer(format);
+
+    // create texture view
+	 // TODO if we don't end up using this, egl_od is kinda useless
+
+    /*
+    use hal::Device as _;
+    let od: hal::OpenDevice<hal::gles::Api> = device.egl_od.expect("no egl_od");
+
+    let view = unsafe {
+        od.device
+            .create_texture_view(
+                &hal_texture,
+                &hal::TextureViewDescriptor {
+                    label: None,
+                    format,
+                    dimension: wgt::TextureViewDimension::D2,
+                    usage: hal::TextureUses::COLOR_TARGET,
+                    range: wgt::ImageSubresourceRange::default(),
+                },
+            )
+            .unwrap()
+    };
+     */
+
+    let (texture_id, _) = context.create_texture_from_hal::<hal::api::Gles>(hal_texture, device_id, &desc, ());
+
+    Arc::into_raw(Arc::new(WGPUTextureImpl {
+        context: context.clone(),
+        id: texture_id,
+        error_sink: error_sink.clone(),
+        surface_id: None,
+        has_surface_presented: Arc::default(),
+        data: TextureData {
+            usage: descriptor.usage,
+            dimension: descriptor.dimension,
+            size: descriptor.size,
+            format: descriptor.format,
+            mip_level_count: descriptor.mipLevelCount,
+            sample_count: descriptor.sampleCount,
+        },
+    }))
+}
