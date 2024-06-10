@@ -311,7 +311,7 @@ void wgpuRenderPassEncoderWriteTimestamp(WGPURenderPassEncoder renderPassEncoder
 
 typedef const void * (*WGPUEGLGetProcAddress)(char const * name) WGPU_FUNCTION_ATTRIBUTE;
 WGPUDevice wgpuInstanceDeviceFromEGL(WGPUInstance instance, WGPU_NULLABLE WGPUDeviceDescriptor const * options, WGPUEGLGetProcAddress getProcAddress);
-WGPUTexture wgpuDeviceDefaultFramebuffer(WGPUDevice device, WGPUTextureDescriptor const * descriptor);
+WGPUTexture wgpuDeviceTextureFromRenderbuffer(WGPUDevice device, uint32_t rbo);
 
 #ifdef __cplusplus
 } // extern "C"
