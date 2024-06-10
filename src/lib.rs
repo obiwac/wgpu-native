@@ -13,6 +13,7 @@ use std::{
     ffi::{CStr, CString},
     fmt::Display,
     mem,
+    num::NonZeroU32,
     num::NonZeroU64,
     sync::{atomic, Arc},
     thread,
@@ -4670,15 +4671,32 @@ pub unsafe extern "C" fn wgpuInstanceDeviceFromEGL(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn wgpuDeviceDefaultFramebuffer(
+pub unsafe extern "C" fn wgpuDeviceTextureFromRenderbuffer(
     device: native::WGPUDevice,
-    descriptor: &native::WGPUTextureDescriptor,
+    rbo: u32,
 ) -> native::WGPUTexture {
     let device = device.as_ref().expect("invalid device");
 
     let device_id = device.id;
     let context = &device.context;
     let error_sink = &device.error_sink;
+
+    let descriptor = native::WGPUTextureDescriptor {
+        label: std::ptr::null(),
+        size: native::WGPUExtent3D {
+            width: 1280,
+            height: 720,
+            depthOrArrayLayers: 1,
+        },
+        mipLevelCount: 1,
+        sampleCount: 1,
+        dimension: native::WGPUTextureDimension_2D,
+        format: native::WGPUTextureFormat_RGBA8Unorm,
+        usage: native::WGPUTextureUsage_RenderAttachment | native::WGPUTextureUsage_CopySrc,
+        viewFormatCount: 0,
+        viewFormats: std::ptr::null(),
+        nextInChain: std::ptr::null(),
+    };
 
     // texture descriptor
 
@@ -4700,35 +4718,32 @@ pub unsafe extern "C" fn wgpuDeviceDefaultFramebuffer(
             .collect(),
     };
 
+    let hal_desc = hal::TextureDescriptor {
+        label: None,
+        size: conv::map_extent3d(&descriptor.size),
+        mip_level_count: descriptor.mipLevelCount,
+        sample_count: descriptor.sampleCount,
+        dimension: conv::map_texture_dimension(descriptor.dimension),
+        format: conv::map_texture_format(descriptor.format)
+            .expect("invalid texture format for texture descriptor"),
+        usage: hal::TextureUses::empty(),
+        memory_flags: hal::MemoryFlags::empty(),
+        view_formats: vec![],
+    };
+
     // create texture
 
-    let format = desc.format;
-    let hal_texture = <hal::api::Gles as hal::Api>::Texture::default_framebuffer(format);
+    let rbo = NonZeroU32::new(rbo).expect("invalid rbo");
 
-    // create texture view
-	 // TODO if we don't end up using this, egl_od is kinda useless
+    let hal_texture =
+        context.device_as_hal::<hal::api::Gles, _, hal::gles::Texture>(device_id, |hal_device| {
+            hal_device
+                .unwrap()
+                .texture_from_raw_renderbuffer(rbo, &hal_desc, None)
+        });
 
-    /*
-    use hal::Device as _;
-    let od: hal::OpenDevice<hal::gles::Api> = device.egl_od.expect("no egl_od");
-
-    let view = unsafe {
-        od.device
-            .create_texture_view(
-                &hal_texture,
-                &hal::TextureViewDescriptor {
-                    label: None,
-                    format,
-                    dimension: wgt::TextureViewDimension::D2,
-                    usage: hal::TextureUses::COLOR_TARGET,
-                    range: wgt::ImageSubresourceRange::default(),
-                },
-            )
-            .unwrap()
-    };
-     */
-
-    let (texture_id, _) = context.create_texture_from_hal::<hal::api::Gles>(hal_texture, device_id, &desc, ());
+    let (texture_id, _) =
+        context.create_texture_from_hal::<hal::api::Gles>(hal_texture, device_id, &desc, ());
 
     Arc::into_raw(Arc::new(WGPUTextureImpl {
         context: context.clone(),
