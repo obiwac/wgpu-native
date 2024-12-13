@@ -19,6 +19,7 @@ The bindings are based on the WebGPU-native header found at `ffi/webgpu-headers/
 - [dvijaha/WGPUNative.jl](https://github.com/dvijaha/WGPUNative.jl) - stable Julia wrapper
 - [kgpu/wgpuj](https://github.com/kgpu/kgpu/tree/master/wgpuj) - Java/Kotlin wrapper
 - [wgpu4k/wgpu4k](https://github.com/wgpu4k/wgpu4k) - WIP Kotlin Multi Platform wrapper
+- [karmakrafts/Multiplatform wgpu](https://git.karmakrafts.dev/kk/multiplatform-wgpu) - Kotlin/Native wrapper
 - [rajveermalviya/go-webgpu](https://github.com/rajveermalviya/go-webgpu) - Go wrapper
 - [WebGPU-C++](https://github.com/eliemichel/WebGPU-Cpp) - Auto-generated C++ wrapper (developed for the [Learn WebGPU native](https://eliemichel.github.io/LearnWebGPU) course)
 - [jai_wgpu_native](https://github.com/SogoCZE/jai_wgpu_native) - Raw Jai bindings
