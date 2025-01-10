@@ -13,6 +13,7 @@ use std::{
     ffi::{CStr, CString},
     fmt::Display,
     mem,
+    num::NonZeroU32,
     num::NonZeroU64,
     sync::{atomic, Arc},
     thread,
@@ -2631,7 +2632,8 @@ pub unsafe extern "C" fn wgpuInstanceCreateSurface(
             WGPUSType_SurfaceDescriptorFromXlibWindow => native::WGPUSurfaceDescriptorFromXlibWindow,
             WGPUSType_SurfaceDescriptorFromWaylandSurface => native::WGPUSurfaceDescriptorFromWaylandSurface,
             WGPUSType_SurfaceDescriptorFromMetalLayer => native::WGPUSurfaceDescriptorFromMetalLayer,
-            WGPUSType_SurfaceDescriptorFromAndroidNativeWindow => native::WGPUSurfaceDescriptorFromAndroidNativeWindow)
+            WGPUSType_SurfaceDescriptorFromAndroidNativeWindow => native::WGPUSurfaceDescriptorFromAndroidNativeWindow,
+            WGPUSType_SurfaceDescriptorFromDrmFd => native::WGPUSurfaceDescriptorFromDrmFd)
     );
 
     let surface_id = match create_surface_params {
@@ -2648,6 +2650,9 @@ pub unsafe extern "C" fn wgpuInstanceCreateSurface(
                 Err(cause) => handle_error_fatal(cause, "wgpuInstanceCreateSurface"),
             }
         }
+        CreateSurfaceParams::DrmFd(fd) => context
+            .instance_create_surface_from_drm_fd(fd, ())
+            .expect("failed to create surface from DRM fd"),
     };
 
     Arc::into_raw(Arc::new(WGPUSurfaceImpl {
@@ -3996,6 +4001,7 @@ pub unsafe extern "C" fn wgpuSurfaceCapabilitiesFreeMembers(
     capabilities: native::WGPUSurfaceCapabilities,
 ) {
     if !capabilities.formats.is_null() && capabilities.formatCount > 0 {
+<<<<<<< HEAD
         drop(Vec::from_raw_parts(
             capabilities.formats as *mut native::WGPUTextureFormat,
             capabilities.formatCount,
@@ -4015,6 +4021,27 @@ pub unsafe extern "C" fn wgpuSurfaceCapabilitiesFreeMembers(
             capabilities.alphaModeCount,
             capabilities.alphaModeCount,
         ));
+=======
+        // drop(Vec::from_raw_parts(
+        //     capabilities.formats,
+        //     capabilities.formatCount,
+        //     capabilities.formatCount,
+        // ));
+    }
+    if !capabilities.presentModes.is_null() && capabilities.presentModeCount > 0 {
+        // drop(Vec::from_raw_parts(
+        //     capabilities.presentModes,
+        //     capabilities.presentModeCount,
+        //     capabilities.presentModeCount,
+        // ));
+    }
+    if !capabilities.alphaModes.is_null() && capabilities.alphaModeCount > 0 {
+        // drop(Vec::from_raw_parts(
+        //     capabilities.alphaModes,
+        //     capabilities.alphaModeCount,
+        //     capabilities.alphaModeCount,
+        // ));
+>>>>>>> 315f9e2 (lib: Fix for newer versions of `webgpu-headers`)
     }
 }
 
@@ -4562,4 +4589,175 @@ pub unsafe extern "C" fn wgpuRenderPassEncoderWriteTimestamp(
             "wgpuRenderPassEncoderWriteTimestamp",
         ),
     }
+}
+
+// TODO these are all extensions related to external context creation
+//      should they be in their own files?
+
+#[no_mangle]
+pub unsafe extern "C" fn wgpuInstanceDeviceFromEGL(
+    instance: native::WGPUInstance, // TODO is this even necessary? In the raw-gles example they don't use the instance at all, everything works with the adapter
+    descriptor: Option<&native::WGPUDeviceDescriptor>,
+    get_proc_address: native::WGPUEGLGetProcAddress, // TODO make this "official", cuz right now it's just me modifying webgpu.h manually (or maybe not actually, cuz I put it in wgpu.h?)
+) -> *const WGPUDeviceImpl {
+    let instance = instance.as_ref().expect("invalid instance");
+    let context = Arc::clone(&instance.context);
+    let get_proc_address = get_proc_address.expect("invalid get_proc_address function");
+
+    // create exposed adapter and open device
+
+    let exposed = unsafe {
+        <hal::api::Gles as hal::Api>::Adapter::new_external(|name| {
+            let name = CString::new(name).unwrap();
+            get_proc_address(name.as_ptr())
+        })
+    };
+
+    let exposed = exposed.expect("failed to create exposed adapter");
+    let od = unsafe {
+        exposed
+            .adapter
+            .open(wgt::Features::empty(), &wgt::Limits::downlevel_defaults())
+    };
+    let od = od.unwrap();
+
+    use hal::Adapter;
+    let adapter_id = context.create_adapter_from_hal(exposed, ());
+
+    // set up desc
+
+    let adapter_limits = gfx_select!(adapter_id => context.adapter_limits(adapter_id))
+        .expect("failed to get adapter limits");
+    let base_limits = get_base_device_limits_from_adapter_limits(&adapter_limits);
+
+    let (desc, trace_str, device_lost_handler) = match descriptor {
+        Some(descriptor) => {
+            let (desc, trace_str) = follow_chain!(
+                map_device_descriptor((descriptor, base_limits),
+                WGPUSType_DeviceExtras => native::WGPUDeviceExtras)
+            );
+            let device_lost_handler = DeviceLostCallback {
+                callback: descriptor.deviceLostCallback,
+                userdata: descriptor.deviceLostUserdata,
+            };
+            (desc, trace_str, device_lost_handler)
+        }
+        None => (
+            wgt::DeviceDescriptor {
+                required_limits: base_limits,
+                ..Default::default()
+            },
+            std::ptr::null(),
+            DEFAULT_DEVICE_LOST_HANDLER,
+        ),
+    };
+
+    // create device
+
+    let (device_id, queue_id, err) =
+        context.create_device_from_hal(adapter_id, od, &desc, ptr_into_path(trace_str), (), ());
+    match err {
+        None => Arc::into_raw(Arc::new(WGPUDeviceImpl {
+            context: context.clone(),
+            id: device_id,
+            queue: Arc::new(QueueId {
+                context: context.clone(),
+                id: queue_id,
+            }),
+            error_sink: Arc::new(Mutex::new(ErrorSinkRaw::new(device_lost_handler))),
+        })),
+        Some(_err) => std::ptr::null_mut(), // TODO err
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn wgpuDeviceTextureFromRenderbuffer(
+    device: native::WGPUDevice,
+    rbo: u32,
+) -> native::WGPUTexture {
+    let device = device.as_ref().expect("invalid device");
+
+    let device_id = device.id;
+    let context = &device.context;
+    let error_sink = &device.error_sink;
+
+    let descriptor = native::WGPUTextureDescriptor {
+        label: std::ptr::null(),
+        size: native::WGPUExtent3D {
+            width: 1280,
+            height: 720,
+            depthOrArrayLayers: 1,
+        },
+        mipLevelCount: 1,
+        sampleCount: 1,
+        dimension: native::WGPUTextureDimension_2D,
+        format: native::WGPUTextureFormat_RGBA8Unorm,
+        usage: native::WGPUTextureUsage_RenderAttachment | native::WGPUTextureUsage_CopySrc,
+        viewFormatCount: 0,
+        viewFormats: std::ptr::null(),
+        nextInChain: std::ptr::null(),
+    };
+
+    // texture descriptor
+
+    let desc = wgt::TextureDescriptor {
+        label: ptr_into_label(descriptor.label),
+        size: conv::map_extent3d(&descriptor.size),
+        mip_level_count: descriptor.mipLevelCount,
+        sample_count: descriptor.sampleCount,
+        dimension: conv::map_texture_dimension(descriptor.dimension),
+        format: conv::map_texture_format(descriptor.format)
+            .expect("invalid texture format for texture descriptor"),
+        usage: wgt::TextureUsages::from_bits(descriptor.usage)
+            .expect("invalid texture usage for texture descriptor"),
+        view_formats: make_slice(descriptor.viewFormats, descriptor.viewFormatCount)
+            .iter()
+            .map(|v| {
+                conv::map_texture_format(*v).expect("invalid view format for texture descriptor")
+            })
+            .collect(),
+    };
+
+    let hal_desc = hal::TextureDescriptor {
+        label: None,
+        size: conv::map_extent3d(&descriptor.size),
+        mip_level_count: descriptor.mipLevelCount,
+        sample_count: descriptor.sampleCount,
+        dimension: conv::map_texture_dimension(descriptor.dimension),
+        format: conv::map_texture_format(descriptor.format)
+            .expect("invalid texture format for texture descriptor"),
+        usage: hal::TextureUses::empty(),
+        memory_flags: hal::MemoryFlags::empty(),
+        view_formats: vec![],
+    };
+
+    // create texture
+
+    let rbo = NonZeroU32::new(rbo).expect("invalid rbo");
+
+    let hal_texture =
+        context.device_as_hal::<hal::api::Gles, _, hal::gles::Texture>(device_id, |hal_device| {
+            hal_device
+                .unwrap()
+                .texture_from_raw_renderbuffer(rbo, &hal_desc, None)
+        });
+
+    let (texture_id, _) =
+        context.create_texture_from_hal::<hal::api::Gles>(hal_texture, device_id, &desc, ());
+
+    Arc::into_raw(Arc::new(WGPUTextureImpl {
+        context: context.clone(),
+        id: texture_id,
+        error_sink: error_sink.clone(),
+        surface_id: None,
+        has_surface_presented: Arc::default(),
+        data: TextureData {
+            usage: descriptor.usage,
+            dimension: descriptor.dimension,
+            size: descriptor.size,
+            format: descriptor.format,
+            mip_level_count: descriptor.mipLevelCount,
+            sample_count: descriptor.sampleCount,
+        },
+    }))
 }
